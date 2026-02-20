@@ -4,53 +4,61 @@ import time
 
 class MarzbanAPI:
     def __init__(self):
-        self.url = os.getenv("MARZBAN_URL").rstrip('/')
+        self.url = os.getenv("MARZBAN_URL", "").rstrip('/')
         self.admin_username = os.getenv("MARZBAN_ADMIN_USERNAME")
         self.admin_password = os.getenv("MARZBAN_ADMIN_PASSWORD")
         self.token = self._get_token()
 
     def _get_token(self):
+        # Если URL пустой или не начинается с http
+        if not self.url.startswith('http'):
+            print(f"❌ ОШИБКА: URL '{self.url}' неверный. Должен начинаться с http:// или https://")
+            return None
+
+        login_url = f"{self.url}/api/admin/token"
+        print(f"🔄 Попытка авторизации по адресу: {login_url}")
+        
         try:
             response = requests.post(
-                f"{self.url}/api/admin/token",
+                login_url,
                 data={"username": self.admin_username, "password": self.admin_password},
-                timeout=10
+                timeout=10,
+                headers={"User-Agent": "MarzbanBot/1.0"} # Некоторые сервера блокируют запросы без User-Agent
             )
-            return response.json().get("access_token")
+            
+            if response.status_code == 200:
+                print("✅ Авторизация успешна!")
+                return response.json().get("access_token")
+            else:
+                print(f"❌ ОШИБКА: Панель ответила статусом {response.status_code}")
+                print(f"Ответ сервера: {response.text}")
+                return None
+                
+        except requests.exceptions.ConnectionError:
+            print("❌ ОШИБКА: Сервер сбросил соединение. Возможно, неверный порт или включен Cloudflare.")
+            return None
         except Exception as e:
-            print(f"Ошибка авторизации Marzban: {e}")
+            print(f"❌ НЕПРЕДВИДЕННАЯ ОШИБКА: {e}")
             return None
 
     def get_headers(self):
+        if not self.token:
+            self.token = self._get_token() # Пробуем переавторизоваться
         return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
 
     def create_user(self, username):
-        # Настройки: 30 дней (в секундах), лимит 50ГБ
+        if not self.token:
+            return {"error": "No token"}
+        
         expire_time = int(time.time() + (30 * 86400))
         payload = {
             "username": username,
-            "proxies": {"vless": {}, "vmess": {}, "trojan": {}, "shadowsocks": {}},
-            "data_limit": 50 * 1024 * 1024 * 1024,
+            "proxies": {"vless": {}, "vmess": {}}, 
             "expire": expire_time
         }
-        r = requests.post(f"{self.url}/api/user", json=payload, headers=self.get_headers())
-        return r.json()
-
-    def get_user(self, username):
-        r = requests.get(f"{self.url}/api/user/{username}", headers=self.get_headers())
-        return r.json() if r.status_code == 200 else None
-
-    def renew_user(self, username, days=30):
-        user = self.get_user(username)
-        if not user: return False
-        
-        current_expire = user.get('expire') or int(time.time())
-        new_expire = current_expire + (days * 86400)
-        
-        r = requests.put(f"{self.url}/api/user/{username}", 
-                         json={"expire": new_expire}, headers=self.get_headers())
-        return r.status_code == 200
-
-    def delete_user(self, username):
-        r = requests.delete(f"{self.url}/api/user/{username}", headers=self.get_headers())
-        return r.status_code == 200
+        try:
+            r = requests.post(f"{self.url}/api/user", json=payload, headers=self.get_headers(), timeout=10)
+            return r.json()
+        except Exception as e:
+            print(f"Ошибка при создании: {e}")
+            return {"error": str(e)}
