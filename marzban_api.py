@@ -7,47 +7,48 @@ class MarzbanAPI:
         self.url = os.getenv("MARZBAN_URL", "").rstrip('/')
         self.username = os.getenv("MARZBAN_ADMIN_USERNAME")
         self.password = os.getenv("MARZBAN_ADMIN_PASSWORD")
-        self.token = self._get_token()
 
     def _get_token(self):
-        if not self.url: return None
-        
-        # Marzban принимает данные для токена как Form Data
-        login_data = {"username": self.username, "password": self.password}
         try:
-            r = requests.post(f"{self.url}/api/admin/token", data=login_data, timeout=10)
-            
+            r = requests.post(f"{self.url}/api/admin/token", 
+                            data={"username": self.username, "password": self.password}, timeout=10)
             if r.status_code == 200:
-                print("✅ [API] Авторизация успешна!")
                 return r.json().get("access_token")
-            elif r.status_code == 401:
-                print("❌ [API] Ошибка: Неверный логин или пароль админа!")
-            elif r.status_code == 404:
-                print(f"❌ [API] Ошибка: По адресу {self.url} панель Marzban не найдена (404)")
-            else:
-                print(f"❌ [API] Ошибка: Статус {r.status_code}, Ответ: {r.text}")
             return None
-        except Exception as e:
-            print(f"❌ [API] Критическая ошибка подключения: {e}")
+        except:
             return None
-
-    def get_headers(self):
-        token = self._get_token() # Обновляем токен при каждом запросе для надежности
-        return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     def create_user(self, username):
-        headers = self.get_headers()
-        if "None" in str(headers.get("Authorization")):
-            return {"error": "auth_failed"}
-            
+        token = self._get_token()
+        if not token: return None
+        
         payload = {
             "username": username,
             "proxies": {"vless": {}, "vmess": {}},
-            "expire": int(time.time() + 2592000) # +30 дней
+            "expire": int(time.time() + 2592000)
         }
-        
         try:
-            r = requests.post(f"{self.url}/api/user", json=payload, headers=headers, timeout=10)
+            r = requests.post(f"{self.url}/api/user", json=payload, 
+                             headers={"Authorization": f"Bearer {token}"}, timeout=10)
             return r.json()
-        except Exception as e:
-            return {"error": str(e)}
+        except:
+            return None
+
+    def get_user(self, username):
+        token = self._get_token()
+        r = requests.get(f"{self.url}/api/user/{username}", 
+                        headers={"Authorization": f"Bearer {token}"})
+        return r.json() if r.status_code == 200 else None
+
+    def renew_user(self, username):
+        user = self.get_user(username)
+        if not user: return False
+        token = self._get_token()
+        new_expire = (user.get('expire') or int(time.time())) + 2592000
+        r = requests.put(f"{self.url}/api/user/{username}", 
+                        json={"expire": new_expire}, headers={"Authorization": f"Bearer {token}"})
+        return r.status_code == 200
+
+    def delete_user(self, username):
+        token = self._get_token()
+        requests.delete(f"{self.url}/api/user/{username}", headers={"Authorization": f"Bearer {token}"})
